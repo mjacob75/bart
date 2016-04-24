@@ -61,6 +61,7 @@ int main_nufft(int argc, char* argv[])
 		{ 'd', true, opt_vec3, &coilim_dims, " x:y:z\tdimensions" },
 		{ 'D', true, opt_vec3, &coilim_dims, NULL },
 		{ 't', false, opt_set, &conf.toeplitz, "\tToeplitz embedding for inverse NUFFT" },
+		{ 'L', false, opt_set, &conf.low_mem, "\tLow-memory mode" },
 		{ 'c', false, opt_set, &precond, "\tPreconditioning for inverse NUFFT" },
 		{ 'l', true, opt_float, &lambda, " lambda\tl2 regularization" },
 		{ 'm', true, opt_int, &cgconf.maxiter, NULL },
