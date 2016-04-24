@@ -38,6 +38,7 @@
 struct nufft_conf_s nufft_conf_defaults = {
 
 	.toeplitz = false,
+	.low_mem = false,
 };
 
 
@@ -69,6 +70,7 @@ struct nufft_data {
 	double beta;			///< Kaiser-Bessel beta parameter
 
 	const struct linop_s* fft_op;	///< FFT operator
+	const struct linop_s* fft1_op;	///< FFT operator
 
 	long* ksp_dims;			///< Kspace dimension
 	long* cim_dims;			///< Coil image dimension
@@ -260,6 +262,10 @@ struct linop_s* nufft_create(unsigned int N,			///< Number of dimension
 
 	data->fft_op = linop_fft_create(ND, data->cml_dims, FFT_FLAGS, use_gpu);
 
+	data->fft1_op = NULL;
+
+	if (conf.low_mem)
+		data->fft1_op = linop_fft_create(ND, data->cim_dims, FFT_FLAGS, use_gpu);
 
 
 	return linop_create(N, ksp_dims, N, cim_dims,
@@ -544,6 +550,9 @@ static void nufft_free_data(const linop_data_t* _data)
 
 	linop_free(data->fft_op);
 
+	if (data->conf.low_mem)
+		linop_free(data->fft1_op);
+
 	free(data);
 }
 
@@ -612,11 +621,30 @@ static void nufft_apply_adjoint(const linop_data_t* _data, complex float* dst, c
 
 	md_decompose(data->N, factors, data->cml_dims, data->grid, data->cm2_dims, gridX, CFL_SIZE);
 	md_free(gridX);
-	md_zmulc2(ND, data->cml_dims, data->cml_strs, data->grid, data->cml_strs, data->grid, data->img_strs, data->fftmod);
-	linop_adjoint(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
 
-	md_clear(ND, data->cim_dims, dst, CFL_SIZE);
-	md_zfmacc2(ND, data->cml_dims, data->cim_strs, dst, data->cml_strs, data->grid, data->lph_strs, data->linphase);
+	if (data->conf.low_mem) {
+
+		md_clear(ND, data->cim_dims, dst, CFL_SIZE);
+
+		for (unsigned int i = 0; i < data->cml_dims[data->N]; i++) {
+
+			debug_printf(DP_DEBUG1, "NUFFT: %d\n", i);
+
+			complex float* grid = (complex float*)((char*)data->grid + i * data->cml_strs[data->N]);
+			md_zmulc2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, grid, data->img_strs, data->fftmod);
+			linop_adjoint(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
+
+			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, (complex float*)((char*)data->linphase + i * data->lph_strs[data->N]));
+		}
+
+	} else {
+
+		md_zmulc2(ND, data->cml_dims, data->cml_strs, data->grid, data->cml_strs, data->grid, data->img_strs, data->fftmod);
+		linop_adjoint(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
+
+		md_clear(ND, data->cim_dims, dst, CFL_SIZE);
+		md_zfmacc2(ND, data->cml_dims, data->cim_strs, dst, data->cml_strs, data->grid, data->lph_strs, data->linphase);
+	}
 
 	if (data->conf.toeplitz)
 		md_zmul2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, dst, data->img_strs, data->roll);
@@ -652,14 +680,35 @@ static void toeplitz_mult(const struct nufft_data* data, complex float* dst, con
 {
 	unsigned int ND = data->N + 3;
 
-	md_zmul2(ND, data->cml_dims, data->cml_strs, data->grid, data->cim_strs, src, data->lph_strs, data->linphase);
+	if (data->conf.low_mem) {
 
-	linop_forward(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
-	md_zmul2(ND, data->cml_dims, data->cml_strs, data->grid, data->cml_strs, data->grid, data->psf_strs, data->psf);
-	linop_adjoint(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
+		md_clear(ND, data->cim_dims, dst, CFL_SIZE);
 
-	md_clear(ND, data->cim_dims, dst, CFL_SIZE);
-	md_zfmacc2(ND, data->cml_dims, data->cim_strs, dst, data->cml_strs, data->grid, data->lph_strs, data->linphase);
+		for (unsigned int i = 0; i < data->cml_dims[data->N]; i++) {
+
+			debug_printf(DP_DEBUG1, "NUFFT: %d\n", i);
+
+			complex float* grid = (char*)data->grid + i * data->cml_strs[data->N];
+			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, src, data->lph_strs, (char*)data->linphase + i * data->lph_strs[data->N]);
+
+			linop_forward(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
+			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, grid, data->psf_strs, (char*)data->psf + i * data->psf_strs[data->N]);
+			linop_adjoint(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
+
+			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, (char*)data->linphase + i * data->lph_strs[data->N]);
+		}
+
+	} else {
+
+		md_zmul2(ND, data->cml_dims, data->cml_strs, data->grid, data->cim_strs, src, data->lph_strs, data->linphase);
+
+		linop_forward(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
+		md_zmul2(ND, data->cml_dims, data->cml_strs, data->grid, data->cml_strs, data->grid, data->psf_strs, data->psf);
+		linop_adjoint(data->fft_op, ND, data->cml_dims, data->grid, ND, data->cml_dims, data->grid);
+
+		md_clear(ND, data->cim_dims, dst, CFL_SIZE);
+		md_zfmacc2(ND, data->cml_dims, data->cim_strs, dst, data->cml_strs, data->grid, data->lph_strs, data->linphase);
+	}
 }
 
 
