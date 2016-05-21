@@ -630,11 +630,11 @@ static void nufft_apply_adjoint(const linop_data_t* _data, complex float* dst, c
 
 			debug_printf(DP_DEBUG1, "NUFFT: %d\n", i);
 
-			complex float* grid = (complex float*)((char*)data->grid + i * data->cml_strs[data->N]);
+			complex float* grid = &MD_ACCESS1(ND, data->cml_strs, data->N, i, data->grid);
 			md_zmulc2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, grid, data->img_strs, data->fftmod);
 			linop_adjoint(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
 
-			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, (complex float*)((char*)data->linphase + i * data->lph_strs[data->N]));
+			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, &MD_ACCESS1(ND, data->lph_strs, data->N, i, data->linphase));
 		}
 
 	} else {
@@ -688,14 +688,14 @@ static void toeplitz_mult(const struct nufft_data* data, complex float* dst, con
 
 			debug_printf(DP_DEBUG1, "NUFFT: %d\n", i);
 
-			complex float* grid = (char*)data->grid + i * data->cml_strs[data->N];
-			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, src, data->lph_strs, (char*)data->linphase + i * data->lph_strs[data->N]);
+			complex float* grid = &MD_ACCESS1(ND, data->cml_strs, data->N, i, data->grid);
+			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, src, data->lph_strs, &MD_ACCESS1(ND, data->lph_strs, data->N, i, data->linphase));
 
 			linop_forward(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
-			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, grid, data->psf_strs, (char*)data->psf + i * data->psf_strs[data->N]);
+			md_zmul2(ND, data->cim_dims, data->cim_strs, grid, data->cim_strs, grid, data->psf_strs, &MD_ACCESS1(ND, data->psf_strs, data->N, i, data->psf));
 			linop_adjoint(data->fft1_op, ND, data->cim_dims, grid, ND, data->cim_dims, grid);
 
-			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, (char*)data->linphase + i * data->lph_strs[data->N]);
+			md_zfmacc2(ND, data->cim_dims, data->cim_strs, dst, data->cim_strs, grid, data->lph_strs, &MD_ACCESS1(ND, data->lph_strs, data->N, i, data->linphase));
 		}
 
 	} else {
